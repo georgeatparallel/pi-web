@@ -12,8 +12,8 @@ import { createTestModelRuntime, testModel } from "./piSessionService.testSuppor
 
 const endpoint = "https://search.parallel.ai/mcp";
 const projectUserAgent = "pi-web (+https://github.com/jmfederico/pi-web)";
-const searchTool = "mcp__parallel__web_search";
-const fetchTool = "mcp__parallel__web_fetch";
+const searchTool = "mcp__pi_web_default_search__web_search";
+const fetchTool = "mcp__pi_web_default_search__web_fetch";
 type Runtime = Awaited<ReturnType<typeof createAgentSessionRuntime>>;
 type Session = Runtime["session"];
 interface Rpc { id?: number; method: string; params?: { name?: string; arguments?: unknown } }
@@ -151,7 +151,7 @@ function script(session: Session, responses: AssistantMessage["content"][], cons
   };
 }
 
-const discover: AssistantMessage["content"] = [{ type: "toolCall", id: "discover", name: "tool_search", arguments: { query: "mcp__parallel web search fetch", limit: 2 } }];
+const discover: AssistantMessage["content"] = [{ type: "toolCall", id: "discover", name: "tool_search", arguments: { query: "mcp__pi_web_default_search web search fetch", limit: 2 } }];
 const search: AssistantMessage["content"] = [{ type: "toolCall", id: "search", name: searchTool, arguments: { objective: "Find current documentation" } }];
 const done: AssistantMessage["content"] = [{ type: "text", text: "Source read" }];
 
@@ -242,6 +242,20 @@ it.each(["chosen", "parallel"])("preserves %s registered by an extension during 
     await session.prompt("Keep the server registered during startup");
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every((request) => request.url === "https://chosen.example/mcp")).toBe(true);
+  });
+});
+
+it("lets an explicit parallel server registered before a prompt replace the default", async () => {
+  const requests = serveMcp();
+  const chosen: ExtensionFactory = (pi) => { pi.on("before_agent_start", () => {
+    pi.registerMcpServer("parallel", { url: "https://chosen.example/mcp", exposure: "direct" });
+  }); };
+  await withSession({ extensions: [chosen] }, async (session) => {
+    script(session, [done]);
+    await session.prompt("Keep the explicit Parallel server");
+    await expect.poll(() => requests.some((request) => request.url === "https://chosen.example/mcp")).toBe(true);
+    expect(session.getActiveToolNames()).not.toContain(searchTool);
+    expect(requests.some((request) => request.url === endpoint)).toBe(false);
   });
 });
 
