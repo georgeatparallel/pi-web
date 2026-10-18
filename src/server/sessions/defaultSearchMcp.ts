@@ -16,13 +16,12 @@ function hasConfig(path: string): boolean {
 export function withDefaultSearchMcp(mcp: ExtensionFactory): ExtensionFactory {
   return (pi) => {
     let registered = false;
-    // Register before MCP's session_start handler reads the registry. Keep the
-    // same builtin identity so Pi's replacement and disable controls still apply.
-    pi.on("session_start", (_event, ctx) => {
-      if (registered) {
-        pi.unregisterMcpServer("parallel");
-        registered = false;
-      }
+    let considered = false;
+    // Wait until startup extensions have registered their servers, including a
+    // server named parallel. MCP supports registrations after session_start.
+    pi.on("before_agent_start", (_event, ctx) => {
+      if (considered) return;
+      considered = true;
       // Even an empty, malformed, disabled, or untrusted project configuration
       // is an explicit choice. Never use a config error as a search fallback.
       if (hasConfig(join(getAgentDir(), "mcp.json"))
@@ -39,6 +38,15 @@ export function withDefaultSearchMcp(mcp: ExtensionFactory): ExtensionFactory {
       });
       registered = true;
     });
+    pi.on("mcp_servers_change", () => {
+      if (registered && pi.getMcpServers().some((server) => server.name !== "parallel")) {
+        // Withdraw only our own default. An explicit server arriving later must
+        // not leave an unconfigured fallback running, even if that server fails.
+        registered = false;
+        pi.unregisterMcpServer("parallel");
+      }
+    });
+    // Keep the same builtin identity so Pi's replacement/disable controls apply.
     return mcp(pi);
   };
 }

@@ -232,6 +232,38 @@ it("keeps extension-registered servers", async () => {
   });
 });
 
+it.each(["chosen", "parallel"])("preserves %s registered by an extension during session_start", async (name) => {
+  const requests = serveMcp();
+  const chosen: ExtensionFactory = (pi) => { pi.on("session_start", () => {
+    pi.registerMcpServer(name, { url: "https://chosen.example/mcp", exposure: "direct" });
+  }); };
+  await withSession({ extensions: [chosen] }, async (session) => {
+    script(session, [done]);
+    await session.prompt("Keep the server registered during startup");
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.url === "https://chosen.example/mcp")).toBe(true);
+  });
+});
+
+it("withdraws only its own default when an extension registers a server during the session", async () => {
+  const requests = serveMcp();
+  let selectServer: () => void = () => { throw new Error("Extension not loaded"); };
+  const chosen: ExtensionFactory = (pi) => { selectServer = () => {
+    pi.registerMcpServer("chosen", { url: "https://chosen.example/mcp", exposure: "direct" });
+  }; };
+  await withSession({ extensions: [chosen] }, async (session) => {
+    script(session, [discover, search, done]);
+    await session.prompt("Use default search");
+    const count = requests.length;
+    selectServer();
+    await expect.poll(() => session.getActiveToolNames()).not.toContain(searchTool);
+    script(session, [done]);
+    await session.prompt("Keep the newly selected server");
+    expect(requests.slice(count).some((request) => request.url === "https://chosen.example/mcp")).toBe(true);
+    expect(requests.slice(count).some((request) => request.url === endpoint && request.rpc?.method === "tools/call")).toBe(false);
+  });
+});
+
 it("honors permission hooks before a search reaches HTTP", async () => {
   const requests = serveMcp();
   const deny: ExtensionFactory = (pi) => { pi.on("tool_call", (event) => {
